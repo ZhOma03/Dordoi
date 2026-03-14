@@ -25,6 +25,7 @@
     body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-weight: 300; min-height: 100vh; overflow-x: hidden; }
 
     /* TOPBAR */
+    .topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 36px; z-index: 100; }
     .test-banner { background: repeating-linear-gradient(45deg, var(--danger), var(--danger) 10px, #2a0000 10px, #2a0000 20px); padding: 8px; text-align: center; font-family: 'Unbounded', sans-serif; font-size: 11px; font-weight: 800; color: white; letter-spacing: 0.2em; position: sticky; top: 0; z-index: 101; }
 
     .topbar-logo { font-family: 'Unbounded', sans-serif; font-size: 13px; font-weight: 800; color: var(--accent); letter-spacing: 0.04em; line-height: 1.2; }
@@ -507,6 +508,9 @@
 
 
 
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
 <script>
 // ============================================================
 // STATE
@@ -531,10 +535,13 @@ const HARDCODED_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby-FcZpMP2
 function init() {
   const s = localStorage.getItem('sklad_settings');
   if (s) DB.settings = { ...DB.settings, ...JSON.parse(s) };
-  // Always use hardcoded URL — works on any device without setup
   DB.settings.scriptUrl = HARDCODED_SCRIPT_URL;
   loadSettingsForm();
   updateDbStatus('loading');
+  // Attach modal close on overlay click
+  document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.remove('open'); });
+  });
   loadFromSheets();
 }
 
@@ -545,15 +552,24 @@ function persistSettings() {
 // ============================================================
 // GOOGLE SHEETS API
 // ============================================================
-async function callScript(action, payload = {}) {
-  const res = await fetch(HARDCODED_SCRIPT_URL, {
-    method: 'POST',
-    redirect: 'follow',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify({ action, payload })
+function xhrRequest(url, method, body) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+    xhr.timeout = 20000;
+    if (method === 'POST') xhr.setRequestHeader('Content-Type', 'text/plain');
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 400) resolve(xhr.responseText);
+      else reject(new Error('HTTP ' + xhr.status + ': ' + xhr.responseText.slice(0, 100)));
+    };
+    xhr.onerror = () => reject(new Error('Ошибка сети'));
+    xhr.ontimeout = () => reject(new Error('Таймаут — сервер не отвечает'));
+    xhr.send(body || null);
   });
+}
 
-  const text = await res.text();
+async function callScript(action, payload = {}) {
+  const text = await xhrRequest(HARDCODED_SCRIPT_URL, 'POST', JSON.stringify({ action, payload }));
   let data;
   try { data = JSON.parse(text); }
   catch { throw new Error('Неверный ответ от скрипта: ' + text.slice(0, 100)); }
@@ -565,16 +581,7 @@ async function loadFromSheets() {
   showLoader('Загрузка данных...');
   updateDbStatus('loading');
   try {
-    const url = HARDCODED_SCRIPT_URL + '?action=getAll';
-    const text = await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', url, true);
-      xhr.timeout = 15000;
-      xhr.onload = () => resolve(xhr.responseText);
-      xhr.onerror = () => reject(new Error('Ошибка сети'));
-      xhr.ontimeout = () => reject(new Error('Таймаут — сервер не отвечает'));
-      xhr.send();
-    });
+    const text = await xhrRequest(HARDCODED_SCRIPT_URL + '?action=getAll', 'GET');
     let data;
     try { data = JSON.parse(text); }
     catch { throw new Error('Неверный ответ: ' + text.slice(0, 120)); }
@@ -735,7 +742,6 @@ async function recognizeProduct() {
 // SAVE RECEIVING
 // ============================================================
 async function saveReceiving() {
-  if (!DB.settings.scriptUrl) return toast('⚠️ Сначала настройте подключение к Google Sheets');
   const name = document.getElementById('rec_name').value.trim();
   const qty = parseInt(document.getElementById('rec_qty').value);
   if (!name) return toast('⚠️ Укажите наименование');
@@ -762,8 +768,6 @@ async function saveReceiving() {
     toast(result.action === 'updated'
       ? `✓ Добавлено ${qty} шт. к существующему товару`
       : '✓ Товар добавлен на склад');
-
-    // Reset form
     ['rec_code','rec_name','rec_qty','rec_costprice','rec_size','rec_color','rec_note'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('rec_category').value = '';
     document.getElementById('photoPreview').style.display = 'none';
@@ -771,15 +775,13 @@ async function saveReceiving() {
     document.getElementById('aiResult').style.display = 'none';
     document.getElementById('photoInput').value = '';
     photoBase64 = null;
-
-    // Reload data
     await loadFromSheets();
   } catch(err) {
     toast('❌ ' + err.message, 4000, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✓ Сохранить поступление';
   }
-
-  btn.disabled = false;
-  btn.textContent = '✓ Сохранить поступление';
 }
 
 // ============================================================
@@ -825,7 +827,6 @@ function updateTotal() {
 }
 
 async function saveSale() {
-  if (!DB.settings.scriptUrl) return toast('⚠️ Сначала настройте подключение');
   const productId = document.getElementById('sale_product').value;
   const qty = parseInt(document.getElementById('sale_qty').value);
   const price = parseFloat(document.getElementById('sale_price').value) || 0;
@@ -862,10 +863,10 @@ async function saveSale() {
     await loadFromSheets();
   } catch(err) {
     toast('❌ ' + err.message, 4000, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✓ Записать продажу';
   }
-
-  btn.disabled = false;
-  btn.textContent = '✓ Записать продажу';
 }
 
 // ============================================================
@@ -880,7 +881,7 @@ function renderAll() {
 
 function renderRecentSales() {
   const el = document.getElementById('recentSalesList');
-  const items = [...DB.sales].sort((a,b) => b.date.localeCompare(a.date)).slice(0, 15);
+  const items = [...DB.sales].sort((a,b) => new Date(b.date) - new Date(a.date)).slice(0, 15);
   if (!items.length) { el.innerHTML = emptyState('📭','Продаж пока нет'); return; }
   el.innerHTML = items.map(s => `
     <div class="sale-item">
@@ -957,7 +958,7 @@ function renderAnalytics() {
       <div><div class="inv-item-qty">${p.qty}</div><div class="inv-qty-label">прод.</div></div>
     </div>`).join('') : emptyState('📊','Продаж пока нет');
 
-  const sorted = [...DB.sales].sort((a,b) => b.date.localeCompare(a.date));
+  const sorted = [...DB.sales].sort((a,b) => new Date(b.date) - new Date(a.date));
   document.getElementById('allSalesList').innerHTML = sorted.length ? sorted.slice(0,50).map(s => `
     <div class="sale-item">
       <div class="sale-dot" style="background:${s.type==='wholesale'?'var(--wholesale)':'var(--retail)'}"></div>
@@ -992,14 +993,12 @@ function saveSettings() {
 }
 
 async function testConnection() {
-  const url = HARDCODED_SCRIPT_URL;
   const spinner = document.getElementById('testSpinner');
   const result = document.getElementById('testResult');
   spinner.style.display = 'inline-block';
   result.style.display = 'none';
   try {
-    const res = await fetch(url + '?action=getAll', { redirect: 'follow' });
-    const text = await res.text();
+    const text = await xhrRequest(HARDCODED_SCRIPT_URL + '?action=getAll', 'GET');
     const data = JSON.parse(text);
     if (data.error) throw new Error(data.error);
     result.style.display = 'block';
@@ -1059,10 +1058,6 @@ function emptyState(icon, text) {
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
-// Close modal when clicking overlay background
-document.querySelectorAll('.modal-overlay').forEach(overlay => {
-  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.remove('open'); });
-});
 
 // ---- EDIT ----
 function openEdit(productId) {
@@ -1103,9 +1098,10 @@ async function saveEdit() {
     await loadFromSheets();
   } catch(err) {
     toast('❌ ' + err.message, 4000, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✓ Сохранить';
   }
-  btn.disabled = false;
-  btn.textContent = '✓ Сохранить';
 }
 
 // ---- DELETE ----
@@ -1130,9 +1126,10 @@ async function executeDelete() {
     await loadFromSheets();
   } catch(err) {
     toast('❌ ' + err.message, 4000, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🗑 Удалить';
   }
-  btn.disabled = false;
-  btn.textContent = '🗑 Удалить';
 }
 
 // ---- QUICK SELL ----
@@ -1148,7 +1145,10 @@ function openQuickSell(productId) {
   document.getElementById('qs_price').value = '';
   document.getElementById('qs_buyer').value = '';
   document.getElementById('qsTotalRow').style.display = 'none';
-  setQsSaleType('wholesale');
+  // Always reset to wholesale on open so UI and state are in sync
+  qsSaleType = 'wholesale';
+  document.getElementById('qsTypeWholesale').className = 'btn btn-wholesale';
+  document.getElementById('qsTypeRetail').className = 'btn btn-outline';
   openModal('quickSellModal');
 }
 
@@ -1202,12 +1202,13 @@ async function saveQuickSale() {
     await loadFromSheets();
   } catch(err) {
     toast('❌ ' + err.message, 4000, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✓ Записать продажу';
   }
-  btn.disabled = false;
-  btn.textContent = '✓ Записать продажу';
 }
 
-
+init();
 </script>
 </body>
 </html>
