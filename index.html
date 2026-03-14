@@ -973,30 +973,31 @@ function renderAnalytics() {
 // SETTINGS
 // ============================================================
 function loadSettingsForm() {
-  document.getElementById('scriptUrl').value = DB.settings.scriptUrl || '';
+  document.getElementById('scriptUrl').value = HARDCODED_SCRIPT_URL;
   document.getElementById('anthropicKey').value = DB.settings.anthropicKey || '';
   document.getElementById('lowStockThreshold').value = DB.settings.lowStockThreshold || 5;
 }
 
 function saveSettings() {
-  DB.settings.scriptUrl = document.getElementById('scriptUrl').value.trim();
+  // Never overwrite the hardcoded script URL
+  DB.settings.scriptUrl = HARDCODED_SCRIPT_URL;
   DB.settings.anthropicKey = document.getElementById('anthropicKey').value.trim();
   DB.settings.lowStockThreshold = parseInt(document.getElementById('lowStockThreshold').value) || 5;
   persistSettings();
   toast('✓ Настройки сохранены');
-  if (DB.settings.scriptUrl) loadFromSheets();
+  loadFromSheets();
 }
 
 async function testConnection() {
-  const url = document.getElementById('scriptUrl').value.trim();
-  if (!url) return toast('⚠️ Введите URL скрипта');
+  const url = HARDCODED_SCRIPT_URL;
   const spinner = document.getElementById('testSpinner');
   const result = document.getElementById('testResult');
   spinner.style.display = 'inline-block';
   result.style.display = 'none';
   try {
-    const res = await fetch(url + '?action=getAll');
-    const data = await res.json();
+    const res = await fetch(url + '?action=getAll', { redirect: 'follow' });
+    const text = await res.text();
+    const data = JSON.parse(text);
     if (data.error) throw new Error(data.error);
     result.style.display = 'block';
     result.style.color = 'var(--success)';
