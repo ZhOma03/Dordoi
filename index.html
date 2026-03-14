@@ -546,10 +546,7 @@ function persistSettings() {
 // GOOGLE SHEETS API
 // ============================================================
 async function callScript(action, payload = {}) {
-  const url = DB.settings.scriptUrl;
-  if (!url) throw new Error('URL скрипта не указан');
-
-  const res = await fetch(url, {
+  const res = await fetch(HARDCODED_SCRIPT_URL, {
     method: 'POST',
     redirect: 'follow',
     headers: { 'Content-Type': 'text/plain' },
@@ -565,11 +562,10 @@ async function callScript(action, payload = {}) {
 }
 
 async function loadFromSheets() {
-  if (!DB.settings.scriptUrl) return;
   showLoader('Загрузка данных...');
   updateDbStatus('loading');
   try {
-    const url = DB.settings.scriptUrl + '?action=getAll';
+    const url = HARDCODED_SCRIPT_URL + '?action=getAll';
     const res = await fetch(url, { redirect: 'follow' });
     const text = await res.text();
     let data;
