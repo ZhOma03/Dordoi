@@ -566,7 +566,10 @@ async function loadFromSheets() {
   updateDbStatus('loading');
   try {
     const url = HARDCODED_SCRIPT_URL + '?action=getAll';
-    const res = await fetch(url, { redirect: 'follow' });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(url, { redirect: 'follow', signal: controller.signal });
+    clearTimeout(timeout);
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); }
