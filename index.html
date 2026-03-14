@@ -566,11 +566,15 @@ async function loadFromSheets() {
   updateDbStatus('loading');
   try {
     const url = HARDCODED_SCRIPT_URL + '?action=getAll';
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(url, { redirect: 'follow', signal: controller.signal });
-    clearTimeout(timeout);
-    const text = await res.text();
+    const text = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.timeout = 15000;
+      xhr.onload = () => resolve(xhr.responseText);
+      xhr.onerror = () => reject(new Error('Ошибка сети'));
+      xhr.ontimeout = () => reject(new Error('Таймаут — сервер не отвечает'));
+      xhr.send();
+    });
     let data;
     try { data = JSON.parse(text); }
     catch { throw new Error('Неверный ответ: ' + text.slice(0, 120)); }
