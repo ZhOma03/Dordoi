@@ -209,14 +209,27 @@
 
   <div class="card">
     <div class="card-title">📦 Новое поступление</div>
+
+    <!-- Photo 1: Item -->
     <div class="form-group">
       <label class="form-label">Фото товара</label>
       <div class="photo-upload">
-        <input type="file" id="photoInput" accept="image/*" capture="environment" onchange="handlePhoto(this)">
-        <div class="photo-upload-icon">📷</div>
-        <div class="photo-upload-text">Нажмите чтобы сделать фото<br><strong>или загрузить изображение</strong></div>
+        <input type="file" id="photoInput1" accept="image/*" capture="environment" onchange="handlePhoto(this, 1)">
+        <div class="photo-upload-icon" id="photoIcon1">👕</div>
+        <div class="photo-upload-text" id="photoText1">Фото товара<br><strong>как выглядит</strong></div>
       </div>
-      <img id="photoPreview" class="photo-preview" />
+      <img id="photoPreview1" class="photo-preview" />
+    </div>
+
+    <!-- Photo 2: Tag/Label -->
+    <div class="form-group">
+      <label class="form-label">Фото бирки / этикетки</label>
+      <div class="photo-upload">
+        <input type="file" id="photoInput2" accept="image/*" capture="environment" onchange="handlePhoto(this, 2)">
+        <div class="photo-upload-icon" id="photoIcon2">🏷️</div>
+        <div class="photo-upload-text" id="photoText2">Фото бирки<br><strong>артикул и детали</strong></div>
+      </div>
+      <img id="photoPreview2" class="photo-preview" />
     </div>
 
     <div class="form-group" id="recognizeGroup" style="display:none">
@@ -525,7 +538,6 @@ let DB = {
   catFilter: '',
   searchQ: ''
 };
-let photoBase64 = null;
 
 // ============================================================
 // INIT
@@ -650,15 +662,14 @@ function setTab(tab) {
 // ============================================================
 // PHOTO + AI
 // ============================================================
-function handlePhoto(input) {
-  const file = input.files[0];
-  if (!file) return;
+let photoBase64_1 = null; // item photo
+let photoBase64_2 = null; // tag/label photo
 
+function compressImage(file, callback) {
   const reader = new FileReader();
   reader.onload = e => {
     const img = new Image();
     img.onload = () => {
-      // Resize to max 1024px to avoid large payloads
       const MAX = 1024;
       let w = img.width, h = img.height;
       if (w > MAX || h > MAX) {
@@ -668,22 +679,44 @@ function handlePhoto(input) {
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      // Always convert to JPEG
       const compressed = canvas.toDataURL('image/jpeg', 0.85);
-      photoBase64 = compressed.split(',')[1];
-      const prev = document.getElementById('photoPreview');
-      prev.src = compressed;
-      prev.style.display = 'block';
-      document.getElementById('recognizeGroup').style.display = 'block';
-      document.getElementById('aiResult').style.display = 'none';
+      callback(compressed);
     };
     img.src = e.target.result;
   };
   reader.readAsDataURL(file);
 }
 
+function handlePhoto(input, slot) {
+  const file = input.files[0];
+  if (!file) return;
+  compressImage(file, compressed => {
+    const b64 = compressed.split(',')[1];
+    if (slot === 1) {
+      photoBase64_1 = b64;
+      const prev = document.getElementById('photoPreview1');
+      prev.src = compressed;
+      prev.style.display = 'block';
+      document.getElementById('photoIcon1').style.display = 'none';
+      document.getElementById('photoText1').style.display = 'none';
+    } else {
+      photoBase64_2 = b64;
+      const prev = document.getElementById('photoPreview2');
+      prev.src = compressed;
+      prev.style.display = 'block';
+      document.getElementById('photoIcon2').style.display = 'none';
+      document.getElementById('photoText2').style.display = 'none';
+    }
+    // Show recognize button as soon as at least one photo is loaded
+    if (photoBase64_1 || photoBase64_2) {
+      document.getElementById('recognizeGroup').style.display = 'block';
+      document.getElementById('aiResult').style.display = 'none';
+    }
+  });
+}
+
 async function recognizeProduct() {
-  if (!photoBase64) return;
+  if (!photoBase64_1 && !photoBase64_2) return;
 
   const GEMINI_KEY = 'AIzaSyBIHcaS3j2vtJCy0mRjkJYfX-2hSspAr6g';
   const btn = document.getElementById('recognizeBtn');
@@ -692,27 +725,45 @@ async function recognizeProduct() {
   document.getElementById('recBtnText').textContent = 'Анализирую...';
 
   try {
+    // Build parts array — include whichever images are available
+    const parts = [];
+    if (photoBase64_1) {
+      parts.push({ inline_data: { mime_type: 'image/jpeg', data: photoBase64_1 } });
+    }
+    if (photoBase64_2) {
+      parts.push({ inline_data: { mime_type: 'image/jpeg', data: photoBase64_2 } });
+    }
+
+    // Tailor the prompt based on how many images were provided
+    let prompt;
+    if (photoBase64_1 && photoBase64_2) {
+      prompt = `You have two images of a men's clothing item from China.
+Image 1: the product itself (how it looks).
+Image 2: the tag or label (contains the item code and details).
+Use BOTH images together. Extract info and return ONLY valid JSON, no markdown, no extra text:
+{"code":"item number or article from the tag or empty string","name":"product name in Russian","category":"one of: Куртки/Брюки/Рубашки/Футболки/Обувь/Аксессуары/Другое","color":"color","size":"size if visible"}`;
+    } else {
+      prompt = `This is an image of a men's clothing item or its tag from China.
+Extract info and return ONLY valid JSON, no markdown, no extra text:
+{"code":"item number or article from package or empty string","name":"product name in Russian","category":"one of: Куртки/Брюки/Рубашки/Футболки/Обувь/Аксессуары/Другое","color":"color","size":"size if visible"}`;
+    }
+    parts.push({ text: prompt });
+
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{
-          parts: [
-            { inline_data: { mime_type: 'image/jpeg', data: photoBase64 } },
-            { text: `Look at this product package image. Extract info and return ONLY valid JSON, no markdown, no extra text:
-{"code":"item number or article from package or empty string","name":"product name","category":"one of: Куртки/Брюки/Рубашки/Футболки/Обувь/Аксессуары/Другое","color":"color","size":"size if visible"}` }
-          ]
-        }],
+        contents: [{ parts }],
         generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
       })
     });
+
     const rawText = await res.text();
     let data;
     try { data = JSON.parse(rawText); }
     catch { throw new Error('Ответ API: ' + rawText.slice(0, 200)); }
     if (data.error) throw new Error(data.error.message);
     const text = data.candidates[0].content.parts[0].text;
-    // Extract JSON even if there's extra text around it
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('Не удалось найти JSON в ответе: ' + text.slice(0, 100));
     const parsed = JSON.parse(jsonMatch[0]);
@@ -731,11 +782,11 @@ async function recognizeProduct() {
     toast('✨ Товар распознан!');
   } catch(err) {
     toast('❌ Ошибка: ' + err.message, 5000, true);
+  } finally {
+    btn.disabled = false;
+    document.getElementById('recSpinner').style.display = 'none';
+    document.getElementById('recBtnText').textContent = '🤖 Определить товар по фото';
   }
-
-  btn.disabled = false;
-  document.getElementById('recSpinner').style.display = 'none';
-  document.getElementById('recBtnText').textContent = '🤖 Определить товар по фото';
 }
 
 // ============================================================
@@ -770,11 +821,14 @@ async function saveReceiving() {
       : '✓ Товар добавлен на склад');
     ['rec_code','rec_name','rec_qty','rec_costprice','rec_size','rec_color','rec_note'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('rec_category').value = '';
-    document.getElementById('photoPreview').style.display = 'none';
+    // Reset both photo slots
+    photoBase64_1 = null; photoBase64_2 = null;
+    ['photoPreview1','photoPreview2'].forEach(id => { const el = document.getElementById(id); el.style.display = 'none'; el.src = ''; });
+    ['photoIcon1','photoIcon2','photoText1','photoText2'].forEach(id => document.getElementById(id).style.display = '');
+    document.getElementById('photoInput1').value = '';
+    document.getElementById('photoInput2').value = '';
     document.getElementById('recognizeGroup').style.display = 'none';
     document.getElementById('aiResult').style.display = 'none';
-    document.getElementById('photoInput').value = '';
-    photoBase64 = null;
     await loadFromSheets();
   } catch(err) {
     toast('❌ ' + err.message, 4000, true);
